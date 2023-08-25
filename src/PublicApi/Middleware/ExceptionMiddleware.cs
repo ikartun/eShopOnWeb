@@ -1,7 +1,9 @@
 ﻿using System;
+using System.IO;
 using System.Net;
 using System.Threading.Tasks;
 using BlazorShared.Models;
+using Microsoft.ApplicationInsights.DataContracts;
 using Microsoft.AspNetCore.Http;
 using Microsoft.eShopWeb.ApplicationCore.Exceptions;
 
@@ -24,7 +26,7 @@ public class ExceptionMiddleware
         }
         catch (Exception ex)
         {
-            await HandleExceptionAsync(httpContext, ex);        
+            await HandleExceptionAsync(httpContext, ex);
         }
     }
 
@@ -50,5 +52,7 @@ public class ExceptionMiddleware
                 Message = exception.Message
             }.ToString());
         }
+        var requestTelemetry = context.Features.Get<RequestTelemetry>();
+        requestTelemetry?.Properties.Add("ResponseBodyErrorMessage", exception.Message);
     }
 }

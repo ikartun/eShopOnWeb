@@ -1,4 +1,9 @@
-﻿using Ardalis.GuardClauses;
+﻿using System.Collections.Generic;
+using System.Net;
+using System.Net.Mime;
+using System.Text;
+using Ardalis.GuardClauses;
+using Azure.Messaging.ServiceBus;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
@@ -8,6 +13,8 @@ using Microsoft.eShopWeb.ApplicationCore.Exceptions;
 using Microsoft.eShopWeb.ApplicationCore.Interfaces;
 using Microsoft.eShopWeb.Infrastructure.Identity;
 using Microsoft.eShopWeb.Web.Interfaces;
+using Microsoft.Extensions.Options;
+using Newtonsoft.Json.Linq;
 
 namespace Microsoft.eShopWeb.Web.Pages.Basket;
 
@@ -20,18 +27,21 @@ public class CheckoutModel : PageModel
     private string? _username = null;
     private readonly IBasketViewModelService _basketViewModelService;
     private readonly IAppLogger<CheckoutModel> _logger;
+    private AppSettings AppSettings { get; set; }
 
     public CheckoutModel(IBasketService basketService,
         IBasketViewModelService basketViewModelService,
         SignInManager<ApplicationUser> signInManager,
         IOrderService orderService,
-        IAppLogger<CheckoutModel> logger)
+        IAppLogger<CheckoutModel> logger,
+        IOptions<AppSettings> settings)
     {
         _basketService = basketService;
         _signInManager = signInManager;
         _orderService = orderService;
         _basketViewModelService = basketViewModelService;
         _logger = logger;
+        AppSettings = settings.Value;
     }
 
     public BasketViewModel BasketModel { get; set; } = new BasketViewModel();
@@ -53,9 +63,17 @@ public class CheckoutModel : PageModel
             }
 
             var updateModel = items.ToDictionary(b => b.Id.ToString(), b => b.Quantity);
+            var address = new Address("123 Main St.", "Kent", "OH", "United States", "44240");
             await _basketService.SetQuantities(BasketModel.Id, updateModel);
-            await _orderService.CreateOrderAsync(BasketModel.Id, new Address("123 Main St.", "Kent", "OH", "United States", "44240"));
+            await _orderService.CreateOrderAsync(BasketModel.Id, address);
             await _basketService.DeleteBasketAsync(BasketModel.Id);
+
+            string orderItems = prepareOrderItems(updateModel);
+            string orderDetails = prepareOrderDetails(BasketModel, address.ToString());
+
+            //callAzureFunc(orderItems, AppSettings.OrderItemsReserverFunctionURL);
+            callAzureFunc(orderDetails, AppSettings.OrderDetailsProcessorFunctionURL);
+            pushMessageToServiceBusAsync(orderItems, AppSettings.OrderDetailsProcessorServiceBusURL).GetAwaiter().GetResult();
         }
         catch (EmptyBasketOnCheckoutException emptyBasketOnCheckoutException)
         {
@@ -65,6 +83,57 @@ public class CheckoutModel : PageModel
         }
 
         return RedirectToPage("Success");
+    }
+
+    private async Task pushMessageToServiceBusAsync(string orderDetails, string Url)
+    {
+        const string QueueName = "orderitemsreserver";
+
+        await using var client = new ServiceBusClient(Url);
+
+        await using ServiceBusSender sender = client.CreateSender(QueueName);
+        try
+        {
+            var message = new ServiceBusMessage(orderDetails);
+            _logger.LogWarning($"Sending message: {message}");
+            await sender.SendMessageAsync(message);
+        }
+        catch (Exception exception)
+        {
+            Console.WriteLine($"{DateTime.Now} :: Exception: {exception.Message}");
+        }
+        finally
+        {
+            await sender.DisposeAsync();
+            await client.DisposeAsync();
+        }
+    }
+
+    private void callAzureFunc(string orderDetails, string Url)
+    {
+        var httpContent = new StringContent(orderDetails, Encoding.UTF8, "application/json");
+        var client = new HttpClient();
+        var result = client.PostAsync(Url, httpContent).GetAwaiter().GetResult();
+    }
+
+    private string prepareOrderDetails(BasketViewModel basketModel, string address)
+    {
+        List<int> orderedItems = new List<int>();
+
+        foreach (var item in basketModel.Items)
+        {
+            orderedItems.Add(item.CatalogItemId);
+        }
+        string orderDetails = "{\"address\": \"" + address + "\", \"items\": [" + string.Join(",", orderedItems) + "], \"totalPrice\": " + basketModel.Total() + "}";
+        _logger.LogInformation(orderDetails);
+        return orderDetails;
+    }
+
+    private string prepareOrderItems(Dictionary<string, int> updateModel)
+    {
+        string orderItems = "{\"order_details\": [" + string.Join(", ", updateModel.Select(kv => "{\"id\":" + kv.Key + ", \"quantity\":" + kv.Value + "}").ToArray()) + "]}";
+        _logger.LogInformation(orderItems);
+        return orderItems;
     }
 
     private async Task SetBasketModelAsync()

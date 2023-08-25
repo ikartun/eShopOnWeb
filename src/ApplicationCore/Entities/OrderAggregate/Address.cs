@@ -1,4 +1,8 @@
-﻿namespace Microsoft.eShopWeb.ApplicationCore.Entities.OrderAggregate;
+﻿using static System.Runtime.InteropServices.JavaScript.JSType;
+using System.Xml.Linq;
+using System.Numerics;
+
+namespace Microsoft.eShopWeb.ApplicationCore.Entities.OrderAggregate;
 
 public class Address // ValueObject
 {
@@ -22,5 +26,9 @@ public class Address // ValueObject
         State = state;
         Country = country;
         ZipCode = zipcode;
+    }
+    public override string ToString()
+    {
+        return Street + ", " + City + ", " + State + ", " + Country + ", " + ZipCode;
     }
 }

@@ -1,4 +1,5 @@
-﻿using System.Net.Mime;
+﻿using System.Configuration;
+using System.Net.Mime;
 using Ardalis.ListStartupServices;
 using BlazorAdmin;
 using BlazorAdmin.Services;
@@ -73,6 +74,8 @@ builder.Services.Configure<ServiceConfig>(config =>
     config.Services = new List<ServiceDescriptor>(builder.Services);
     config.Path = "/allservices";
 });
+
+builder.Services.Configure<AppSettings>(builder.Configuration.GetSection("AppSettings"));
 
 // blazor configuration
 var configSection = builder.Configuration.GetRequiredSection(BaseUrlConfiguration.CONFIG_NAME);
